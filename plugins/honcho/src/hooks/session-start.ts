@@ -1,5 +1,5 @@
 import { Honcho } from "@honcho-ai/sdk";
-import { loadConfig, getSessionForPath, setSessionForPath, getSessionName, getHonchoClientOptions, isPluginEnabled, getCachedStdin, getObservationMode } from "../config.js";
+import { loadConfig, getSessionForPath, setSessionForPath, getSessionName, getAiPeerForPath, getHonchoClientOptions, isPluginEnabled, getCachedStdin, getObservationMode } from "../config.js";
 import {
   setCachedUserContext,
   setCachedSessionId,
@@ -87,8 +87,9 @@ export async function handleSessionStart(): Promise<void> {
   setSessionLink(honchoSessionUrl(config.workspace, sessionName), sessionName, claudeInstanceId);
 
   try {
+    const resolvedAiPeer = getAiPeerForPath(cwd) ?? config.aiPeer;
     logHook("session-start", `Starting session in ${cwd}`, { branch: currentGitState?.branch });
-    logFlow("init", `workspace: ${config.workspace}, peers: ${config.peerName}/${config.aiPeer}`);
+    logFlow("init", `workspace: ${config.workspace}, peers: ${config.peerName}/${resolvedAiPeer}`);
 
     // New SDK: workspace is provided at construction time
     const honcho = new Honcho(getHonchoClientOptions(config));
@@ -101,7 +102,7 @@ export async function handleSessionStart(): Promise<void> {
     const [session, userPeer, aiPeer] = await Promise.all([
       honcho.session(sessionName),
       honcho.peer(config.peerName),
-      honcho.peer(config.aiPeer),
+      honcho.peer(resolvedAiPeer),
     ]);
     logApiCall("honcho.session/peer", "GET", `session + 2 peers`, Date.now() - startTime, true);
 
