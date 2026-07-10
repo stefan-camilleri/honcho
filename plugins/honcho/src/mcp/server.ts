@@ -12,6 +12,7 @@ import {
   saveRootField,
   getHonchoClientOptions,
   getSessionName,
+  getAiPeerForPath,
   getConfigPath,
   configExists,
   getDetectedHost,
@@ -105,6 +106,7 @@ function handleGetConfig(cwd: string) {
     sessionStrategy: cfg.sessionStrategy ?? "per-directory",
     sessionPeerPrefix: cfg.sessionPeerPrefix !== false,
     sessions: cfg.sessions ?? {},
+    aiPeerByPath: cfg.aiPeerByPath ?? {},
     messageUpload: cfg.messageUpload ?? {},
     contextRefresh: cfg.contextRefresh ?? {},
     reasoningLevel: cfg.reasoningLevel ?? "medium",
@@ -130,7 +132,7 @@ function handleGetConfig(cwd: string) {
     session: sessionName,
     sessionUrl,
     peerName: cfg.peerName,
-    aiPeer: cfg.aiPeer,
+    aiPeer: getAiPeerForPath(cwd) ?? cfg.aiPeer,
     host: `${endpointLabel} (${endpointInfo?.url})`,
   } : null;
 
@@ -216,7 +218,7 @@ function handleGetConfig(cwd: string) {
 
     ["session", sessionName ?? "unknown"],
     ["mapping", strategyLabels[cfg.sessionStrategy ?? "per-directory"] ?? cfg.sessionStrategy ?? "per directory"],
-    ["peer", `${cfg.peerName} / ${cfg.aiPeer}`],
+    ["peer", `${cfg.peerName} / ${getAiPeerForPath(cwd) ?? cfg.aiPeer}`],
     ["host", hostLabel],
     ["messages", cfg.saveMessages !== false ? "saving enabled" : "saving disabled"],
     ["obs mode", cfg.observationMode ?? "unified"],
@@ -483,6 +485,39 @@ function handleSetConfig(args: Record<string, unknown>) {
       break;
     }
 
+    case "aiPeerByPath.set": {
+      const obj = value as Record<string, unknown>;
+      const path = obj?.path;
+      const peerName = obj?.name;
+      if (typeof path !== "string" || !path || typeof peerName !== "string" || !peerName) {
+        return {
+          content: [{ type: "text", text: JSON.stringify({ success: false, error: "aiPeerByPath.set requires {path: string, name: string}" }, null, 2) }],
+          isError: true,
+        };
+      }
+      if (!cfg.aiPeerByPath) cfg.aiPeerByPath = {};
+      previousValue = cfg.aiPeerByPath[path] ?? null;
+      cfg.aiPeerByPath[path] = peerName;
+      clearPeerCache();
+      cacheInvalidation = { cleared: ["peer IDs"], reason: "Per-path aiPeer changed" };
+      break;
+    }
+
+    case "aiPeerByPath.remove": {
+      const obj = value as Record<string, unknown>;
+      const rPath = obj?.path;
+      if (typeof rPath !== "string" || !rPath) {
+        return {
+          content: [{ type: "text", text: JSON.stringify({ success: false, error: "aiPeerByPath.remove requires {path: string}" }, null, 2) }],
+          isError: true,
+        };
+      }
+      if (!cfg.aiPeerByPath) cfg.aiPeerByPath = {};
+      previousValue = cfg.aiPeerByPath[rPath] ?? null;
+      delete cfg.aiPeerByPath[rPath];
+      break;
+    }
+
     default:
       return {
         content: [{
@@ -725,10 +760,12 @@ export async function runMcpServer(): Promise<void> {
                   "localContext.maxEntries",
                   "sessions.set",
                   "sessions.remove",
+                  "aiPeerByPath.set",
+                  "aiPeerByPath.remove",
                 ],
               },
               value: {
-                description: "New value. For sessions.set: {path, name}. For sessions.remove: {path}.",
+                description: "New value. For sessions.set: {path, name}. For sessions.remove: {path}. For aiPeerByPath.set: {path, name}. For aiPeerByPath.remove: {path}.",
               },
               confirm: {
                 type: "boolean",
@@ -746,6 +783,11 @@ export async function runMcpServer(): Promise<void> {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     const cwd = getLastActiveCwd() || process.cwd();
+    // Per-cwd override — see stop.ts for the full rationale. This server
+    // process caches `config` at startup and can outlive a cwd change (e.g.
+    // subagents/worktrees), so resolve per-request rather than mutating the
+    // shared closure value.
+    const resolvedAiPeer = getAiPeerForPath(cwd) ?? config.aiPeer;
 
     // ── Config tools (no Honcho session needed) ──
 
@@ -765,7 +807,7 @@ export async function runMcpServer(): Promise<void> {
         // unified: (observer=user, observed=user); directional: (observer=aiPeer, observed=user)
         const scopePeer = observationMode === "unified"
           ? await honcho.peer(config.peerName)
-          : await honcho.peer(config.aiPeer);
+          : await honcho.peer(resolvedAiPeer);
         const conclusionScope = scopePeer.conclusionsOf(config.peerName);
 
         if (name === "list_conclusions") {
@@ -810,7 +852,7 @@ export async function runMcpServer(): Promise<void> {
       // unified: user observes self — all ops go through userPeer.
       // directional: aiPeer observes user — ops use aiPeer with target.
       const userPeer = await honcho.peer(config.peerName);
-      const aiPeer = observationMode === "directional" ? await honcho.peer(config.aiPeer) : null;
+      const aiPeer = observationMode === "directional" ? await honcho.peer(resolvedAiPeer) : null;
       const activePeer = observationMode === "unified" ? userPeer : aiPeer!;
       const chatTarget = observationMode === "unified" ? undefined : config.peerName;
       const contextTarget = observationMode === "unified" ? undefined : config.peerName;

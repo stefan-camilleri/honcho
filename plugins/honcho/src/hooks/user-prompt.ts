@@ -1,7 +1,7 @@
 import { Honcho } from "@honcho-ai/sdk";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { loadConfig, getSessionName, getHonchoClientOptions, isPluginEnabled, getCachedStdin, getObservationMode } from "../config.js";
+import { loadConfig, getSessionName, getAiPeerForPath, getHonchoClientOptions, isPluginEnabled, getCachedStdin, getObservationMode } from "../config.js";
 import {
   getCachedUserContext,
   getStaleCachedUserContext,
@@ -120,6 +120,8 @@ export async function handleUserPrompt(): Promise<void> {
 
   const prompt = hookInput.prompt || "";
   const cwd = hookInput.workspace_roots?.[0] || hookInput.cwd || process.cwd();
+  // Per-cwd override — see stop.ts for the full rationale.
+  config.aiPeer = getAiPeerForPath(cwd) ?? config.aiPeer;
   const instanceId = hookInput.session_id || getInstanceIdForCwd(cwd);
   const sessionName = getSessionName(cwd, instanceId || undefined);
 

@@ -170,6 +170,18 @@ interface HonchoFileConfig {
   workspace?: string;
   aiPeer?: string;
   sessions?: Record<string, string>;
+  /**
+   * Per-directory aiPeer overrides, keyed by cwd (same shape/precedence idea
+   * as `sessions`). Added to fix a real cross-session bleed: `hosts.<host>.aiPeer`
+   * is a single value shared by every concurrent Claude Code session on a host.
+   * When two sessions in different cwds run at once (e.g. two different
+   * personas), whichever session's startup hook wrote `aiPeer` last "wins" for
+   * BOTH sessions' native message-capture, misattributing turns to the wrong
+   * peer for the duration of the overlap. `aiPeerByPath[cwd]` lets each cwd own
+   * its own entry instead of clobbering one shared field — resolved via
+   * `getAiPeerForPath(cwd)`, which callers should prefer over the flat `aiPeer`.
+   */
+  aiPeerByPath?: Record<string, string>;
   saveMessages?: boolean;
   messageUpload?: MessageUploadConfig;
   contextRefresh?: ContextRefreshConfig;
@@ -215,6 +227,8 @@ export interface HonchoCLAUDEConfig {
   sessionPeerPrefix?: boolean;
   /** Map of directory path -> session name overrides */
   sessions?: Record<string, string>;
+  /** Map of directory path -> aiPeer overrides. See getAiPeerForPath(). */
+  aiPeerByPath?: Record<string, string>;
   /** Save messages to Honcho (default: true) */
   saveMessages?: boolean;
   /** Default reasoning level for Honcho dialectic calls (default: "medium") */
@@ -338,6 +352,7 @@ function resolveConfig(raw: HonchoFileConfig, host: HonchoHost): HonchoCLAUDECon
     sessionStrategy: hostBlock?.sessionStrategy ?? raw.sessionStrategy,
     sessionPeerPrefix: hostBlock?.sessionPeerPrefix ?? raw.sessionPeerPrefix,
     sessions: raw.sessions,
+    aiPeerByPath: raw.aiPeerByPath,
     saveMessages: hostBlock?.saveMessages ?? raw.saveMessages,
     reasoningLevel: hostBlock?.reasoningLevel ?? raw.reasoningLevel,
     observationMode: hostBlock?.observationMode ?? raw.observationMode,
@@ -449,6 +464,11 @@ export function saveConfig(config: HonchoCLAUDEConfig): void {
   // Sessions are shared across hosts -- write at root
   if (config.sessions !== undefined) {
     existing.sessions = config.sessions;
+  }
+
+  // aiPeerByPath is shared across hosts (same reasoning as sessions) -- write at root
+  if (config.aiPeerByPath !== undefined) {
+    existing.aiPeerByPath = config.aiPeerByPath;
   }
 
   // Everything else goes in the host block.
@@ -614,6 +634,42 @@ export function removeSessionForPath(cwd: string): void {
   const config = loadConfig();
   if (!config?.sessions) return;
   delete config.sessions[cwd];
+  saveConfig(config);
+}
+
+/**
+ * Resolve the aiPeer override for a specific cwd, if one was recorded via
+ * setAiPeerForPath(). Callers that write to Honcho or read Honcho context
+ * for a known cwd should prefer this over config.aiPeer — the flat field is
+ * shared by every concurrent session on the host and is not safe to trust
+ * once more than one cwd is active at a time (see aiPeerByPath's doc comment
+ * on HonchoFileConfig).
+ */
+export function getAiPeerForPath(cwd: string): string | null {
+  const config = loadConfig();
+  if (!config?.aiPeerByPath) return null;
+  return config.aiPeerByPath[cwd] || null;
+}
+
+export function setAiPeerForPath(cwd: string, aiPeer: string): void {
+  const config = loadConfig();
+  if (!config) return;
+  if (!config.aiPeerByPath) {
+    config.aiPeerByPath = {};
+  }
+  config.aiPeerByPath[cwd] = aiPeer;
+  saveConfig(config);
+}
+
+export function getAllAiPeersByPath(): Record<string, string> {
+  const config = loadConfig();
+  return config?.aiPeerByPath || {};
+}
+
+export function removeAiPeerForPath(cwd: string): void {
+  const config = loadConfig();
+  if (!config?.aiPeerByPath) return;
+  delete config.aiPeerByPath[cwd];
   saveConfig(config);
 }
 

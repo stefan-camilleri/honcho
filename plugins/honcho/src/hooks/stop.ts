@@ -1,5 +1,5 @@
 import { Honcho } from "@honcho-ai/sdk";
-import { loadConfig, getSessionForPath, getSessionName, getHonchoClientOptions, isPluginEnabled, getCachedStdin } from "../config.js";
+import { loadConfig, getSessionForPath, getSessionName, getAiPeerForPath, getHonchoClientOptions, isPluginEnabled, getCachedStdin } from "../config.js";
 import { existsSync, readFileSync } from "fs";
 import { getInstanceIdForCwd } from "../cache.js";
 import { logHook, logApiCall, setLogContext } from "../log.js";
@@ -125,6 +125,11 @@ export async function handleStop(): Promise<void> {
   }
 
   const cwd = hookInput.workspace_roots?.[0] || hookInput.cwd || process.cwd();
+  // Per-cwd override: config.aiPeer is one host-wide value shared by every
+  // concurrent session; a per-path entry (set by the caller's own session-start
+  // hook, e.g. persona-load.py) takes precedence so this session's own writes
+  // aren't clobbered by another session's aiPeer on the same host.
+  config.aiPeer = getAiPeerForPath(cwd) ?? config.aiPeer;
   const transcriptPath = hookInput.transcript_path;
   const instanceId = hookInput.session_id || getInstanceIdForCwd(cwd);
   const sessionName = getSessionName(cwd, instanceId || undefined);

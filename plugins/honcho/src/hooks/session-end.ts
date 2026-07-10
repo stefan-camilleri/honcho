@@ -1,5 +1,5 @@
 import { Honcho } from "@honcho-ai/sdk";
-import { loadConfig, getSessionName, getHonchoClientOptions, isPluginEnabled, getCachedStdin } from "../config.js";
+import { loadConfig, getSessionName, getAiPeerForPath, getHonchoClientOptions, isPluginEnabled, getCachedStdin } from "../config.js";
 import { existsSync, readFileSync } from "fs";
 import {
   getQueuedMessages,
@@ -196,6 +196,8 @@ export async function handleSessionEnd(): Promise<void> {
   }
 
   const cwd = hookInput.workspace_roots?.[0] || hookInput.cwd || process.cwd();
+  // Per-cwd override — see stop.ts for the full rationale.
+  config.aiPeer = getAiPeerForPath(cwd) ?? config.aiPeer;
   const reason = hookInput.reason || "unknown";
   const transcriptPath = hookInput.transcript_path;
   const instanceId = hookInput.session_id || getInstanceIdForCwd(cwd);
